@@ -1,0 +1,237 @@
+// Prisma Schema for AbhiRide Platform (Optimized & Indexed)
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  PASSENGER
+  DRIVER
+  ADMIN
+}
+
+enum VerificationStatus {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum RideStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum BookingStatus {
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  REFUNDED
+}
+
+model User {
+  id                 String             @id @default(uuid())
+  name               String
+  email              String             @unique
+  phone              String             @unique
+  passwordHash       String
+  role               Role               @default(PASSENGER)
+  avatar             String?
+  bio                String?
+  verificationStatus VerificationStatus @default(UNVERIFIED)
+  trustScore         Int                @default(85) // 0 - 100
+  referralCode       String             @unique
+  referredBy         String?
+  walletBalance      Float              @default(0.0)
+  emergencyContact   String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  vehicles           Vehicle[]
+  ridesAsDriver      Ride[]             @relation("DriverRides")
+  bookings           Booking[]
+  walletTransactions WalletTransaction[]
+  givenReviews       Review[]           @relation("GivenReviews")
+  receivedReviews    Review[]           @relation("ReceivedReviews")
+  sentMessages       ChatMessage[]      @relation("SentMessages")
+  verification       Verification?
+  sosAlerts          SafetySOS[]
+
+  @@index([email])
+  @@index([phone])
+  @@index([trustScore])
+}
+
+model Vehicle {
+  id            String   @id @default(uuid())
+  driverId      String
+  driver        User     @relation(fields: [driverId], references: [id])
+  make          String   // e.g. Honda
+  model         String   // e.g. City
+  color         String   // e.g. Pearl White
+  licensePlate  String   @unique
+  seatsCapacity Int
+  fuelType      String   // Petrol, Diesel, Electric, CNG
+  mileageKmpl   Float    // Mileage in km/l for cost engine
+  verified      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  rides         Ride[]
+
+  @@index([driverId])
+}
+
+model Ride {
+  id               String     @id @default(uuid())
+  driverId         String
+  driver           User       @relation("DriverRides", fields: [driverId], references: [id])
+  vehicleId        String
+  vehicle          Vehicle    @relation(fields: [vehicleId], references: [id])
+  origin           String     // e.g., "Bangalore Silk Board"
+  originLat        Float
+  originLng        Float
+  destination      String     // e.g., "Chennai T. Nagar"
+  destinationLat   Float
+  destinationLng   Float
+  departureTime    DateTime
+  totalDistanceKm  Float
+  estimatedHours   Float
+  fuelCostTotal    Float
+  tollCostTotal    Float
+  totalExpense     Float      // fuelCostTotal + tollCostTotal
+  seatPrice        Float      // Fair expense per seat: totalExpense / totalSeats
+  availableSeats   Int
+  totalSeats       Int
+  status           RideStatus @default(SCHEDULED)
+  rules            String[]   // e.g., ["No Smoking", "Luggage Allowed", "Women Only"]
+  routePolyline    String?
+  createdAt        DateTime   @default(now())
+
+  bookings         Booking[]
+  chatMessages     ChatMessage[]
+  reviews          Review[]
+  sosAlerts        SafetySOS[]
+
+  @@index([status, departureTime])
+  @@index([driverId])
+  @@index([originLat, originLng])
+  @@index([destinationLat, destinationLng])
+}
+
+model Booking {
+  id            String        @id @default(uuid())
+  rideId        String
+  ride          Ride          @relation(fields: [rideId], references: [id])
+  passengerId   String
+  passenger     User          @relation(fields: [passengerId], references: [id])
+  seatsBooked   Int           @default(1)
+  totalPrice    Float
+  paymentStatus PaymentStatus @default(PENDING)
+  qrTicketCode  String        @unique
+  status        BookingStatus @default(CONFIRMED)
+  pickupPoint   String
+  dropPoint     String
+  createdAt     DateTime      @default(now())
+
+  payments      Payment[]
+
+  @@index([passengerId])
+  @@index([rideId, status])
+}
+
+model Payment {
+  id            String        @id @default(uuid())
+  bookingId     String
+  booking       Booking       @relation(fields: [bookingId], references: [id])
+  amount        Float
+  paymentMethod String        // Razorpay, Wallet, UPI, Card
+  transactionId String        @unique
+  status        PaymentStatus @default(SUCCESS)
+  createdAt     DateTime      @default(now())
+
+  @@index([bookingId])
+}
+
+model WalletTransaction {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  type        String   // CREDIT or DEBIT
+  amount      Float
+  description String
+  referenceId String?
+  createdAt   DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+model Review {
+  id          String   @id @default(uuid())
+  rideId      String
+  ride        Ride     @relation(fields: [rideId], references: [id])
+  reviewerId  String
+  reviewer    User     @relation("GivenReviews", fields: [reviewerId], references: [id])
+  revieweeId  String
+  reviewee    User     @relation("ReceivedReviews", fields: [revieweeId], references: [id])
+  rating      Int      // 1 to 5
+  comment     String
+  tags        String[] // ["Punctual", "Clean Car", "Safe Driver"]
+  createdAt   DateTime @default(now())
+
+  @@index([revieweeId])
+}
+
+model ChatMessage {
+  id        String   @id @default(uuid())
+  rideId    String
+  ride      Ride     @relation(fields: [rideId], references: [id])
+  senderId  String
+  sender    User     @relation("SentMessages", fields: [senderId], references: [id])
+  message   String
+  type      String   @default("TEXT") // TEXT, VOICE, IMAGE, LOCATION
+  createdAt DateTime @default(now())
+
+  @@index([rideId, createdAt])
+}
+
+model Verification {
+  id            String             @id @default(uuid())
+  userId        String             @unique
+  user          User               @relation(fields: [userId], references: [id])
+  aadhaarNumber String?
+  dlNumber      String?
+  selfieUrl     String?
+  status        VerificationStatus @default(PENDING)
+  notes         String?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  @@index([status])
+}
+
+model SafetySOS {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  rideId      String?
+  ride        Ride?    @relation(fields: [rideId], references: [id])
+  lat         Float
+  lng         Float
+  status      String   @default("ACTIVE") // ACTIVE, RESOLVED
+  triggeredAt DateTime @default(now())
+
+  @@index([status, triggeredAt])
+}
